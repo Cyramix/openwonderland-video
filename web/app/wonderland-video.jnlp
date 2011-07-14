@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Source for wonderland.jnlp -->
+
+<jnlp spec="1.0+"
+  codebase="$$codebase"
+  href="wonderland-video.jnlp">
+
+  <information>
+    <title>Open Wonderland 0.5 Video</title>
+    <vendor>Open Wonderland Foundation</vendor>
+    <homepage href="http://openwonderland.org/"/>
+    <description>Open Wonderland 0.5 Video Player</description>
+  </information>
+
+  <security>
+    <all-permissions/>
+  </security>
+  
+  <resources>
+    <j2se version="1.6+" initial-heap-size="128m" max-heap-size="512m" java-vm-args="-Xincgc"/>
+    
+    <jar href="commons-cli-1.1.jar"/>
+    <jar href="xuggle-xuggler.jar"/>
+    <jar href="slf4j-api-1.4.0.jar"/>
+    <jar href="slf4j-jdk14-1.4.0.jar"/>
+    <jar href="wonderland-video.jar"/>
+  </resources>
+
+  <resources os="Windows" arch="x86">
+    <nativelib href="win32/wonderland-native.jar"/>
+  </resources>
+
+  <resources os="Windows" arch="amd64">
+    <nativelib href="win64/wonderland-native.jar"/>
+  </resources>
+
+  <resources os="Linux" arch="i386">
+    <nativelib href="linux/wonderland-native.jar"/>
+  </resources>
+
+  <resources os="Linux" arch="amd64">
+    <nativelib href="linux64/wonderland-native.jar"/>
+  </resources>
+  
+  <resources os="Mac OS X">
+    <nativelib href="macosx/wonderland-native.jar"/>
+  </resources>
+
+  <resources os="SunOS" arch="x86">
+    <nativelib href="solaris/wonderland-native.jar"/>
+  </resources>
+
+  <application-desc main-class="org.jdesktop.wonderland.video.client.SwingVideoPlayer">
+  </application-desc>
+</jnlp>
