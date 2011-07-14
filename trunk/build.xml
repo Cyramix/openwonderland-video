@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project basedir="." default="dist" name="wonderland-video">
+    <!-- current directory needed in all scripts -->
+    <dirname property="current.dir" file="${ant.file.wonderland-video}"/>
+    <property name="wonderland.dir" location="${current.dir}/../wonderland"/>
+
+    <target name="build">
+        <!-- unzip libraries -->
+        <unzip-native-zip platform="linux"/>
+        <unzip-native-zip platform="linux64"/>
+        <unzip-native-zip platform="macosx"/>
+        <unzip-native-zip platform="win32"/>
+        <unzip-native-zip platform="win64"/>
+        
+        <mkdir dir="build/classes"/>
+        
+        <javac debug="true" srcdir="core-src" destdir="build/classes"/>
+        <javac debug="true" srcdir="src" destdir="build/classes">
+            <classpath location="lib/xuggle-xuggler.jar"/>
+        </javac>
+    </target>
+
+    <target name="jar" depends="build">
+        <mkdir dir="build/lib"/>
+        <jar jarfile="build/lib/wonderland-video.jar">
+            <fileset dir="build/classes"/>
+        </jar>
+    </target>
+
+    <!-- package -->
+    <target name="dist" depends="jar, package-webstart" description="Build server distribution"/>
+
+    <target name="run" depends="dist">
+        <!-- defaul to no debug unless set previously -->
+        <property name="debug.args" value=""/>
+        
+        <java fork="true" classname="org.jdesktop.wonderland.video.client.SwingVideoPlayer">
+            <classpath>
+                <dirset dir="build/classes"/>
+                <fileset dir="lib">
+                    <include name="*.jar"/>
+                </fileset>
+                <fileset dir="${wonderland.dir}/core/ext/sgs/sgs-client-0.9.10/lib">
+                    <include name="slf4j*.jar"/>
+                </fileset>
+            </classpath>
+            
+            <jvmarg value="-Djava.library.path=${current.dir}/lib/native/macosx/native"/>
+            <jvmarg value="-Djava.util.logging.config.file=${current.dir}/logging.properties"/>
+            <jvmarg line="${debug.args}"/>
+        </java>
+    </target>
+    
+    <target name="debug" depends="debug-setup, run"/>
+    
+    <target name="debug-setup">
+        <property name="debug.args"
+                  value="-Xdebug -Xrunjdwp:transport=dt_socket,server=y,address=8890,suspend=n"/>
+    </target>
+
+    <target name="package-webstart" depends="jar">
+        <mkdir dir="build/web"/>
+        
+        <!-- copy web content -->
+        <copy todir="build/web">
+            <fileset dir="web"/>
+        </copy>
+        
+        <!-- copy jars, signing as we go -->
+        <sign-and-copy src.jar="lib/commons-cli-1.1.jar"
+                       dest.jar="build/web/app/commons-cli-1.1.jar"/>
+        <sign-and-copy src.jar="lib/xuggle-xuggler.jar"
+                       dest.jar="build/web/app/xuggle-xuggler.jar"/>
+        <sign-and-copy src.jar="build/lib/wonderland-video.jar"
+                       dest.jar="build/web/app/wonderland-video.jar"/>
+        <sign-and-copy src.jar="${wonderland.dir}/core/ext/sgs/sgs-client-0.9.10/lib/slf4j-api-1.4.0.jar"
+                       dest.jar="build/web/app/slf4j-api-1.4.0.jar"/>
+        <sign-and-copy src.jar="${wonderland.dir}/core/ext/sgs/sgs-client-0.9.10/lib/slf4j-jdk14-1.4.0.jar"
+                       dest.jar="build/web/app/slf4j-jdk14-1.4.0.jar"/>
+                       
+        <!-- create native jars for each platform -->
+        <create-native-jar platform="linux"/>
+        <create-native-jar platform="linux64"/>
+        <create-native-jar platform="macosx"/>
+        <create-native-jar platform="win32"/>
+        <create-native-jar platform="win64"/>
+        
+        <!-- copy download servlet to web/WEB-INF/lib -->
+        <mkdir dir="build/web/WEB-INF/lib"/>
+        <copy todir="build/web/WEB-INF/lib" file="lib/deployment-servlet-1.0beta.jar"/>
+        
+        <!-- create a war file -->
+        <jar jarfile="build/lib/wonderland-video.war">
+            <fileset dir="build/web"/>
+        </jar>
+        
+        <!-- create wonderland module -->
+        <mkdir dir="dist"/>
+        <jar jarfile="dist/wonderland-video.jar">
+            <fileset dir="module"/>
+            <zipfileset dir="build/lib" prefix="web">
+                <include name="wonderland-video.war"/>
+            </zipfileset>
+        </jar>
+    </target>
+    
+    <macrodef name="sign-and-copy">
+        <attribute name="src.jar"/>
+        <attribute name="dest.jar"/>
+        
+        <sequential>
+            <signjar jar="@{src.jar}"
+                     keystore="${wonderland.dir}/build-tools/keystore/wonderlandKeystore.jks"
+                     alias="wonderlandsig"
+                     storepass="wonderland"
+                     signedjar="@{dest.jar}"/>        
+        </sequential>
+    </macrodef>
+    
+    <macrodef name="create-native-jar">
+        <attribute name="platform"/>
+            
+        <sequential>
+            <mkdir dir="build/lib/@{platform}"/>
+            
+            <jar jarfile="build/lib/@{platform}/wonderland-native.jar">
+                <fileset dir="lib/native/@{platform}/native"/>
+            </jar>
+            
+            <mkdir dir="build/web/app/@{platform}"/>
+            <sign-and-copy src.jar="build/lib/@{platform}/wonderland-native.jar"
+                           dest.jar="build/web/app/@{platform}/wonderland-native.jar"/>
+        </sequential>
+    </macrodef>
+    
+    <macrodef name="unzip-native-zip">
+        <attribute name="platform"/>
+        
+        <sequential>
+            <mkdir dir="lib/native/@{platform}"/>
+            <unzip src="lib/zip/@{platform}/xuggler.zip" dest="lib/native/@{platform}"
+                   overwrite="false"/>
+        </sequential>
+    </macrodef>
+
+    <!-- clean -->
+    <target name="clean">
+        <delete dir="build"/>
+        <delete dir="dist"/>
+    </target>
+    
+    <!-- remove libraries too -->
+    <target name="scrub" depends="clean">
+        <delete dir="lib/native"/>
+    </target>
+</project>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<wonderland-module>
+    <name>wonderland-video</name>
+    <version>
+        <major>1</major>
+        <minor>0</minor>
+        <mini>0</mini>
+    </version>
+    <description>Wonderland Video Player Infrastructure</description>
+</wonderland-module>
