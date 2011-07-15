@@ -398,7 +398,7 @@ public class VideoQueueFiller implements Runnable {
                 // coder tells us is in this buffer.
                 //
                 // We also pass in a buffer size (1024 in our example), although Xuggler
-                // will probably allocate more space than just the 1024 (it's not important why).
+                // will probably allocate more space than just the 1024 (it's not important why).    
                 IAudioSamples samples = IAudioSamples.make(1024, audioCoder.getChannels());
 
                 // A packet can actually contain multiple sets of samples (or frames of samples
@@ -406,6 +406,22 @@ public class VideoQueueFiller implements Runnable {
                 // times at different offsets in the packet's data.  We capture that here.
                 int offset = 0;
 
+                // we only want to pass a single object to the receiver per packet, so we
+                // need to store all audio data for this packet in a single buffer
+                long dataSize = packet.getDuration() * audioCoder.getChannels() *
+                                IAudioSamples.findSampleBitDepth(audioCoder.getSampleFormat());
+                dataSize /= 8;
+                
+                byte[] data = new byte[(int) dataSize];
+                int dataOffset = 0;
+                int dataLength = 0;
+                
+                // we will use the first PTS value we find as our resulting PTS. This could
+                // theoretically cause a problem if a single packet contains two audio samples
+                // with a gap between them, but that doesn't seem to happen in real life
+                long pts = 0;
+                boolean ptsSet = false;
+                
                 // Keep going until we've processed all data
                 while (offset < packet.getSize()) {
                     int bytesDecoded = audioCoder.decodeAudio(samples, packet, offset);
@@ -424,14 +440,26 @@ public class VideoQueueFiller implements Runnable {
                     // a full set of samples yet.  Therefore you should always check if you
                     // got a complete set of samples from the decoder
                     if (samples.isComplete() && !seekingAudio) {
-                        // note: this call will block if Java's sound buffers fill up, and we're
-                        // okay with that.  That's why we have the video "sleeping" occur
-                        // on another thread.
-                        LOGGER.fine("Add audio to queue at " +
-                                    (samples.getTimeStamp() / 1000000.0));
+                        // check if we have set the PTS, and if not do it now
+                        if (!ptsSet) {
+                            pts = samples.getPts();
+                            ptsSet = true;
+                        }
                         
-                        queue.add(samples);
+                        // write the data at the current offset in the buffer
+                        // and update our pointers
+                        samples.getData().get(0, data, dataOffset, samples.getSize());
+                        dataOffset += samples.getSize();
+                        dataLength += samples.getSize();
                     }
+                }
+                
+                // at this point, if we never set the PTS, it means we were
+                // seeking and there is no packet to write
+                if (ptsSet) {
+                    LOGGER.fine("Add audio to queue at " + (pts / 1000000.0));
+                    AudioFrame frame = new AudioFrame(pts, data, dataLength);
+                    queue.add(frame);
                 }
             }
         }
@@ -646,14 +674,44 @@ public class VideoQueueFiller implements Runnable {
         public void newStream(int id, IStreamCoder coder);
 
         /**
-         * Add the next packet to the queue, blocking until there is
+         * Add the next video frame to the queue, blocking until there is
          * room.
          */
-        public void add(IMediaData data) throws InterruptedException;
+        public void add(IVideoPicture picture) throws InterruptedException;
+        
+        /**
+         * Add the next audio frame to the queue, blocking until there is
+         * room.
+         */
+        public void add(AudioFrame audio) throws InterruptedException;
         
         /**
          * Clear the current queue of packets.
          */
         public void clear();
+    }
+    
+    public static class AudioFrame {
+        private final long pts;
+        private final byte[] data;
+        private final int length;
+
+        public AudioFrame(long pts, byte[] data, int length) {
+            this.pts = pts;
+            this.data = data;
+            this.length = length;
+        }
+
+        public long getPTS() {
+            return pts;
+        }
+
+        public byte[] getData() {
+            return data;
+        }
+        
+        public int getLength() {
+            return length;
+        }
     }
 }
