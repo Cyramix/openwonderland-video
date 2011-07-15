@@ -107,7 +107,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                     localChange.set(true);
                     try {
                         timeSlider.setMaximum((int) (player.getDuration() * 100));
-                        timeLabel.setText("0");
+                        timeLabel.setText("0:0.0");
                     } finally {
                         localChange.set(false);
                     }
@@ -221,7 +221,10 @@ public class SwingVideoPlayer extends javax.swing.JFrame
         }
         
         double secondsTime = i.getTime() / 1000000.0;
-        timeLabel.setText(String.valueOf(secondsTime));
+        int minutes = (int) secondsTime / 60;
+        double seconds = secondsTime % 60.0;
+        
+        timeLabel.setText(String.format("%02d:%05.2f", minutes, seconds));
         
         int timelineTime = (int) (secondsTime * 100);
         
@@ -242,7 +245,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                 localChange.set(true);
                 try {
                     timeSlider.setValue(0);
-                    timeLabel.setText("0");
+                    timeLabel.setText("00:00.00");
                 } finally {
                     localChange.set(false);
                 }
@@ -259,7 +262,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                 localChange.set(true);
                 try {
                     timeSlider.setValue(0);
-                    timeLabel.setText("0");
+                    timeLabel.setText("00:00.00");
                 } finally {
                     localChange.set(false);
                 }
@@ -310,7 +313,11 @@ public class SwingVideoPlayer extends javax.swing.JFrame
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         setTitle("Video Player");
+
+        videoLabel.setPreferredSize(new java.awt.Dimension(640, 480));
         getContentPane().add(videoLabel, java.awt.BorderLayout.CENTER);
+
+        filePanel.setPreferredSize(new java.awt.Dimension(480, 82));
 
         stopButton.setText("Stop");
         stopButton.addActionListener(new java.awt.event.ActionListener() {
@@ -349,7 +356,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
 
         jLabel1.setText("State:");
 
-        stateLabel.setText("PAUSED");
+        stateLabel.setText("MEDIA READY");
 
         timeSlider.addChangeListener(new javax.swing.event.ChangeListener() {
             public void stateChanged(javax.swing.event.ChangeEvent evt) {
@@ -359,7 +366,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
 
         jLabel3.setText("Time:");
 
-        timeLabel.setText("-1");
+        timeLabel.setText("3:31.25");
 
         javax.swing.GroupLayout filePanelLayout = new javax.swing.GroupLayout(filePanel);
         filePanel.setLayout(filePanelLayout);
@@ -371,24 +378,26 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                     .addGroup(filePanelLayout.createSequentialGroup()
                         .addComponent(stopButton)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                        .addComponent(playButton)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                        .addComponent(pauseButton)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(backButton)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(forwardButton))
+                        .addComponent(playButton))
                     .addGroup(filePanelLayout.createSequentialGroup()
                         .addComponent(jLabel1)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(stateLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 120, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addComponent(stateLabel)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(jLabel3)))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(filePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(filePanelLayout.createSequentialGroup()
+                        .addComponent(pauseButton)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(jLabel3)
+                        .addComponent(backButton)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(forwardButton))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, filePanelLayout.createSequentialGroup()
+                        .addComponent(timeSlider, javax.swing.GroupLayout.DEFAULT_SIZE, 173, Short.MAX_VALUE)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(timeSlider, javax.swing.GroupLayout.PREFERRED_SIZE, 322, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(timeLabel)))
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                        .addComponent(timeLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 78, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addGap(294, 294, 294))
         );
         filePanelLayout.setVerticalGroup(
             filePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -396,17 +405,17 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                 .addGroup(filePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(stopButton)
                     .addComponent(playButton)
-                    .addComponent(forwardButton)
                     .addComponent(pauseButton)
-                    .addComponent(backButton))
+                    .addComponent(backButton)
+                    .addComponent(forwardButton))
                 .addGap(17, 17, 17)
                 .addGroup(filePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(timeLabel)
                     .addGroup(filePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                         .addComponent(jLabel1)
                         .addComponent(stateLabel)
                         .addComponent(jLabel3))
-                    .addComponent(timeSlider, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(timeSlider, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(timeLabel))
                 .addContainerGap())
         );
 
@@ -504,7 +513,10 @@ public class SwingVideoPlayer extends javax.swing.JFrame
         }
         
         double targetTime = timeSlider.getValue() / 100.0;
-        timeLabel.setText(String.valueOf(targetTime));
+        int minutes = (int) targetTime / 60;
+        double seconds = targetTime % 60.0;
+        
+        timeLabel.setText(String.format("%02d:%05.2f", minutes, seconds));
         
         if (!timeSlider.getValueIsAdjusting()) {
             player.setPosition(targetTime);

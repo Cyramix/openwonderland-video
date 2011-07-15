@@ -41,6 +41,7 @@ import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 import org.jdesktop.wonderland.client.utils.VideoLibraryLoader;
 import org.jdesktop.wonderland.video.client.FrameListener.FrameQueue;
+import org.jdesktop.wonderland.video.client.VideoQueueFiller.AudioFrame;
 
 /**
  * Streaming video player for xuggler video library.
@@ -548,27 +549,22 @@ public class VideoPlayerImpl implements VideoStateSource,
     }
 
     @Override
-    public void add(IMediaData data) throws InterruptedException {
-        if (data instanceof IVideoPicture) {
-            // do we need a preview frame
-            if (isNeedsPreview()) {
-                notifyFrameListenersPreview((IVideoPicture) data);
-                setNeedsPreview(false);
-                lastFrameTime = data.getTimeStamp() / 1000000.0;
-            }
-            
-            frameQueue.put((IVideoPicture) data);
-        } else if (data instanceof IAudioSamples) {
-            audioQueue.put(new AudioSample((IAudioSamples) data));
+    public void add(IVideoPicture picture) throws InterruptedException {
+        // do we need a preview frame
+        if (isNeedsPreview()) {
+            notifyFrameListenersPreview(picture);
+            setNeedsPreview(false);
+            lastFrameTime = picture.getTimeStamp() / 1000000.0;
         }
-        
-        // if we are playing but the time source is not started, start it
-        // with the time from the first packet we receive
-        if (getState() == VideoPlayerState.PLAYING && !timeSource.isStarted()) {
-            startTimeSource();
-        } else {
-            timeSource.ping();
-        }
+
+        frameQueue.put((IVideoPicture) picture);   
+        pingTimeSource();
+    }
+    
+    @Override
+    public void add(AudioFrame frame) throws InterruptedException {
+        audioQueue.add(frame);
+        pingTimeSource();
     }
     
     @Override
@@ -612,6 +608,16 @@ public class VideoPlayerImpl implements VideoStateSource,
         
         timeSource.start(Math.min(audioTime, videoTime));
     }
+    
+    private void pingTimeSource() {
+        // if we are playing but the time source is not started, start it
+        // with the time from the first packet we receive
+        if (getState() == VideoPlayerState.PLAYING && !timeSource.isStarted()) {
+            startTimeSource();
+        } else {
+            timeSource.ping();
+        }
+    }
 
     /**
      * Initialize JavaSound
@@ -638,10 +644,12 @@ public class VideoPlayerImpl implements VideoStateSource,
      * Play audio samples
      * @param aSamples audio samples to play
      */
-    private static void playJavaSound(SourceDataLine line, byte[] rawBytes) {
+    private static void playJavaSound(SourceDataLine line, byte[] rawBytes,
+                                      int length) 
+    {
         // we're just going to dump all the samples into the line
         if (line != null) {
-            line.write(rawBytes, 0, rawBytes.length);
+            line.write(rawBytes, 0, length);
         }
     }
 
@@ -705,10 +713,13 @@ public class VideoPlayerImpl implements VideoStateSource,
         this.needsPreview = needsPreview;
     }
 
-    class AudioThread extends LinkedBlockingQueue<AudioSample> implements Runnable {
+    class AudioThread extends LinkedBlockingQueue<AudioFrame> implements Runnable {
         private Thread thread;
         private boolean quit = false;
         private boolean cleared = false;
+        
+        private float frameSize;
+        private float frameRate;
         
         public AudioThread() {
             super (65536 / 128);
@@ -755,8 +766,13 @@ public class VideoPlayerImpl implements VideoStateSource,
             try {
                 line.start();
                 
+                // variables used in calculating buffer delay
+                frameSize = line.getFormat().getFrameSize() *
+                            line.getFormat().getChannels();
+                frameRate = line.getFormat().getFrameRate();
+             
                 while (!isQuit()) {
-                    AudioSample sample = poll();
+                    AudioFrame sample = poll();
                     if (sample != null) {
                         // figure out the estimaged play time (the current PTS + the
                         // time needed for this packet to get through the buffer)
@@ -771,13 +787,16 @@ public class VideoPlayerImpl implements VideoStateSource,
                                         " Time diff: " + (timeDiff / 1000000.0));
                         }
                         
-                        while (timeDiff > 50000 && !isCleared() && !isQuit()) {
+                        while (timeDiff > 1000 && !isCleared() && !isQuit()) {
                             if (LOGGER.isLoggable(Level.FINE)) {
                                 LOGGER.fine("Audio early: " + (timeDiff / 1000000.0));;
                             }
                             
-                            // Recheck quit and cleared every 50 ms.
-                            Thread.sleep(50);
+                            // sleep up to 50 milliseconds and recheck
+                            long millisDelay = Math.min(timeDiff / 1000, 50);
+                            int nanosDelay = ((int) (timeDiff % 1000)) * 1000;
+                            
+                            Thread.sleep(millisDelay, nanosDelay);
                             
                             playTime = timeSource.getCurrentPTS() + bufferDelay();
                             timeDiff = sample.getPTS() - playTime;
@@ -801,8 +820,11 @@ public class VideoPlayerImpl implements VideoStateSource,
                         
                         // at this point, add the sample to the queue
                         byte[] rawBytes = sample.getData();
-                        playJavaSound(line, adjustVolume(line, getVolume(), rawBytes,
-                                                         0, rawBytes.length));
+                        int length = sample.getLength();
+                        
+                        byte[] adjustedBytes = adjustVolume(line, getVolume(), 
+                                                            rawBytes, 0, length);
+                        playJavaSound(line, adjustedBytes, length);
                     
                         if (LOGGER.isLoggable(Level.FINE)) {
                             LOGGER.fine("Play audio at " + (sample.getPTS() / 1000000.0) + 
@@ -842,11 +864,10 @@ public class VideoPlayerImpl implements VideoStateSource,
             int bufferRemaining = line.getBufferSize() - line.available();
 
             // convert to number of frames
-            bufferRemaining /= line.getFormat().getFrameSize() *
-                               line.getFormat().getChannels();
+            bufferRemaining /= frameSize;
 
             // calculate time in buffer in seconds
-            float bufferTime = bufferRemaining / line.getFormat().getFrameRate();
+            float bufferTime = bufferRemaining / frameRate;
             long bufferTimeMicros = (long) (bufferTime * 1000000);
             
             return bufferTimeMicros;
@@ -875,25 +896,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             return quit;
         }
     }
-
-    private static class AudioSample {
-        private final long pts;
-        private final byte[] data;
-
-        public AudioSample(IAudioSamples sample) {
-            this.pts = sample.getPts();
-            this.data = sample.getData().getByteArray(0, sample.getSize());
-        }
-
-        public long getPTS() {
-            return pts;
-        }
-
-        public byte[] getData() {
-            return data;
-        }
-    }
-     
+ 
     private class SystemClockTimeSource implements Runnable {
         // ping timeout (in milliseconds)
         private static final long PING_TIMEOUT = 1000; 
