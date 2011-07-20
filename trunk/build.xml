@@ -14,7 +14,6 @@
         
         <mkdir dir="build/classes"/>
         
-        <javac debug="true" srcdir="core-src" destdir="build/classes"/>
         <javac debug="true" srcdir="src" destdir="build/classes">
             <classpath location="lib/xuggle-xuggler.jar"/>
         </javac>
@@ -48,10 +47,46 @@
             <jvmarg value="-Djava.library.path=${current.dir}/lib/native/macosx/native"/>
             <jvmarg value="-Djava.util.logging.config.file=${current.dir}/logging.properties"/>
             <jvmarg line="${debug.args}"/>
+            
+            <!--jvmarg value="-server"/>
+            <jvmarg value="-Xincgc"/>
+            <jvmarg value="-ms300m"/>
+            <jvmarg value="-mx300m"/>
+            <jvmarg value="-XX:NewSize=5m"/>
+            <jvmarg value="-XX:MaxNewSize=5m"/-->
+            <!--jvmarg value="-XX:+UseParNewGC"/-->
+            <!--jvmarg value="-XX:+UseConcMarkSweepGC"/-->
+            <!--jvmarg value="-XX:+PrintClassHistogram"/-->
+            <jvmarg value="-XX:+PrintGCDetails"/>
+            <jvmarg value="-XX:+PrintGCTimeStamps"/>
+            <!--jvmarg value="-XX:+TraceGen0Time"/>
+            <jvmarg value="-XX:+TraceGen1Time"/-->
+        </java>
+    </target>
+    
+    <target name="run-audio" depends="build">
+        <!-- defaul to no debug unless set previously -->
+        <property name="debug.args" value=""/>
+        
+        <java fork="true" classname="org.jdesktop.wonderland.video.client.AudioPlayer">
+            <classpath>
+                <dirset dir="build/classes"/>
+                <fileset dir="lib">
+                    <include name="*.jar"/>
+                </fileset>
+                <fileset dir="${wonderland.dir}/core/ext/sgs/sgs-client-0.9.10/lib">
+                    <include name="slf4j*.jar"/>
+                </fileset>
+            </classpath>
+            
+            <jvmarg value="-Djava.library.path=${current.dir}/lib/native/macosx/native"/>
+            <jvmarg value="-Djava.util.logging.config.file=${current.dir}/logging.properties"/>
+            <jvmarg line="${debug.args}"/>
         </java>
     </target>
     
     <target name="debug" depends="debug-setup, run"/>
+    <target name="debug-audio" depends="debug-setup, run-audio"/>
     
     <target name="debug-setup">
         <property name="debug.args"
