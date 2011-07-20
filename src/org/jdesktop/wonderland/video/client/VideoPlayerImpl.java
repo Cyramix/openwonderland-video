@@ -19,7 +19,6 @@ package org.jdesktop.wonderland.video.client;
 
 import com.xuggle.xuggler.IAudioSamples;
 import com.xuggle.xuggler.ICodec;
-import com.xuggle.xuggler.IMediaData;
 import com.xuggle.xuggler.IPixelFormat;
 import com.xuggle.xuggler.IStreamCoder;
 import com.xuggle.xuggler.IVideoPicture;
@@ -28,10 +27,10 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.sound.sampled.AudioFormat;
@@ -39,7 +38,6 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
-import org.jdesktop.wonderland.client.utils.VideoLibraryLoader;
 import org.jdesktop.wonderland.video.client.FrameListener.FrameQueue;
 import org.jdesktop.wonderland.video.client.VideoQueueFiller.AudioFrame;
 
@@ -247,10 +245,18 @@ public class VideoPlayerImpl implements VideoStateSource,
         if (!timeSource.isStarted()) {
             return null;
         }
-        
+                
         // find the target time
         long targetPTS = timeSource.getCurrentPTS();
 
+        if (LOGGER.isLoggable(Level.FINE)) {
+            LOGGER.fine("Video packet" +
+                        " wall: " + (timeSource.getWallTime() / 1000000.0) +
+                        " time source: " + (timeSource.getCurrentPTS() / 1000000.0) +
+                        " line: " + (line.getMicrosecondPosition() / 1000000.0) +
+                        " wall diff: " + ((timeSource.getWallTime() - line.getMicrosecondPosition()) / 1000000.0));
+        }
+        
         boolean logStats = LOGGER.isLoggable(Level.FINE);
         StringBuilder stats = new StringBuilder();
 
@@ -535,6 +541,8 @@ public class VideoPlayerImpl implements VideoStateSource,
             try {
                 LOGGER.warning("Open java sound");
                 line = openJavaSound(coder);
+                
+                audioQueue.setLine(line);
             } catch (LineUnavailableException ex) {
                 LOGGER.log(Level.WARNING, "Error opening line", ex);
             }
@@ -649,6 +657,10 @@ public class VideoPlayerImpl implements VideoStateSource,
     {
         // we're just going to dump all the samples into the line
         if (line != null) {
+            if (line.available() == line.getBufferSize()) {
+                LOGGER.warning("Audio underrun!");
+            }
+            
             line.write(rawBytes, 0, length);
         }
     }
@@ -713,7 +725,11 @@ public class VideoPlayerImpl implements VideoStateSource,
         this.needsPreview = needsPreview;
     }
 
-    class AudioThread extends LinkedBlockingQueue<AudioFrame> implements Runnable {
+    class AudioThread extends ArrayBlockingQueue<AudioFrame> implements Runnable {
+        // the maximum delay, in microseconds, before we decalare a packet as
+        // early and wait for the proper time to play it
+        private static final int MAX_DELAY = 50000;
+        
         private Thread thread;
         private boolean quit = false;
         private boolean cleared = false;
@@ -721,11 +737,19 @@ public class VideoPlayerImpl implements VideoStateSource,
         private float frameSize;
         private float frameRate;
         
+        private long microsWritten;
+        
         public AudioThread() {
-            super (65536 / 128);
+            super (256);
         }
 
-        public synchronized void start() {
+        public synchronized void setLine(SourceDataLine line) {
+            // variables used in calculating buffer delay
+            frameSize = line.getFormat().getFrameSize();
+            frameRate = line.getFormat().getFrameRate();
+        }
+        
+        public synchronized void start() {       
             if (thread != null) {
                 // already started
                 LOGGER.warning("Audio thread already started");
@@ -734,6 +758,9 @@ public class VideoPlayerImpl implements VideoStateSource,
 
             thread = new Thread(this, "Audio queue filler");
             quit = false;
+            
+            LOGGER.warning("Start line at " + (timeSource.getCurrentPTS() / 1000000.0));
+            line.start();
             thread.start();
         }
 
@@ -745,6 +772,8 @@ public class VideoPlayerImpl implements VideoStateSource,
             }
 
             quit = true;
+            line.stop();
+            
             if (thread != null) {
                 thread.interrupt();
             }
@@ -763,33 +792,46 @@ public class VideoPlayerImpl implements VideoStateSource,
 
         @Override
         public void run() {
-            try {
-                line.start();
-                
-                // variables used in calculating buffer delay
-                frameSize = line.getFormat().getFrameSize() *
-                            line.getFormat().getChannels();
-                frameRate = line.getFormat().getFrameRate();
-             
+            LOGGER.warning("Start audio thread with: " + this.size() + " packets");
+            
+            long runTime = System.currentTimeMillis();
+            long startTime = 0;
+            long calcTime = 0;
+            long waitTime = 0;
+            long checkTime = 0;
+            long adjustTime = 0;
+            long javasoundTime = 0;
+                    
+            try {                
                 while (!isQuit()) {
-                    AudioFrame sample = poll();
+                    startTime = System.currentTimeMillis();
+                    
+                    AudioFrame sample = take();
                     if (sample != null) {
                         // figure out the estimaged play time (the current PTS + the
                         // time needed for this packet to get through the buffer)
-                        long playTime = timeSource.getCurrentPTS() + bufferDelay();
+                        long delay = bufferDelay();
+                        long playTime = timeSource.getCurrentPTS() + delay;
                         
                         // wait until it is time to put this packet on the buffer
                         long timeDiff = sample.getPTS() - playTime;
                         
                         if (LOGGER.isLoggable(Level.FINE)) {
                             LOGGER.fine("Load audio at " + (sample.getPTS() / 1000000.0) + 
+                                        " Wall: " + (timeSource.getWallTime() / 1000000.0) +
+                                        " Timesource: " + (timeSource.getCurrentPTS() / 1000000.0) +
+                                        " Line: " + (line.getMicrosecondPosition() / 1000000.0) +
+                                        " Delay: " + (delay / 1000000.0) +
                                         " Play time: " + (playTime / 1000000.0) + 
-                                        " Time diff: " + (timeDiff / 1000000.0));
+                                        " Time diff: " + (timeDiff / 1000000.0) +
+                                        " Buffer: " + line.available());
                         }
                         
-                        while (timeDiff > 1000 && !isCleared() && !isQuit()) {
-                            if (LOGGER.isLoggable(Level.FINE)) {
-                                LOGGER.fine("Audio early: " + (timeDiff / 1000000.0));;
+                        calcTime = System.currentTimeMillis();
+                        
+                        while (timeDiff > MAX_DELAY && !isCleared() && !isQuit()) {
+                            if (LOGGER.isLoggable(Level.WARNING)) {
+                                LOGGER.warning("Audio early: " + (timeDiff / 1000000.0));;
                             }
                             
                             // sleep up to 50 milliseconds and recheck
@@ -801,6 +843,8 @@ public class VideoPlayerImpl implements VideoStateSource,
                             playTime = timeSource.getCurrentPTS() + bufferDelay();
                             timeDiff = sample.getPTS() - playTime;
                         }
+                        
+                        waitTime = System.currentTimeMillis();
                         
                         // before we play the packet, make sure we are not
                         // quit or cleared
@@ -814,9 +858,7 @@ public class VideoPlayerImpl implements VideoStateSource,
                             continue;
                         }
                         
-                        // figure out what time we think it is now, based on
-                        // the sample we are putting on the queue
-                        long actualTime = sample.getPTS() - bufferDelay();
+                        checkTime = System.currentTimeMillis();
                         
                         // at this point, add the sample to the queue
                         byte[] rawBytes = sample.getData();
@@ -824,26 +866,48 @@ public class VideoPlayerImpl implements VideoStateSource,
                         
                         byte[] adjustedBytes = adjustVolume(line, getVolume(), 
                                                             rawBytes, 0, length);
+                        
+                        // before we actually play the sample, calculate the
+                        // implied time -- this is the time the packet is
+                        // supposed to play minus the delay that it will
+                        // experience in the buffer. We adjust the time source
+                        // based on this implied time so video will stay in
+                        // sync with the audio. 
+                        // 
+                        // Note we do this before adding data to the buffer,
+                        // which would change the buffer delay and potentially
+                        // block
+                        long adjustedTime = sample.getPTS() - bufferDelay();
+                        adjustTime(adjustedTime);
+                        
+                        adjustTime = System.currentTimeMillis();
+                        
+                        // with everything adjusted, we make the call to
+                        // javasound (which could block)
                         playJavaSound(line, adjustedBytes, length);
                     
                         if (LOGGER.isLoggable(Level.FINE)) {
-                            LOGGER.fine("Play audio at " + (sample.getPTS() / 1000000.0) + 
-                                        " Play time: " + (playTime / 1000000.0) + 
-                                        " Time diff: " + (timeDiff / 1000000.0) + 
-                                        " Actual time: " + (actualTime / 1000000.0) + 
-                                           " Time source: " + (timeSource.getCurrentPTS() / 1000000.0));
+                            LOGGER.fine("Played audio at " + (sample.getPTS() / 1000000.0) + 
+                                        " Time source: " + (timeSource.getCurrentPTS() / 1000000.0));
                         }
                         
-                        // if the time difference was too high (because we are 
-                        // getting behind, adjust the time source to match what
-                        // we think is the correct time
-                        if (timeSource.getCurrentPTS() - actualTime > 50000) {
-                            timeSource.adjust(actualTime);
-                        }
+                        microsWritten(bytesToMicroseconds(length));
+                        
+                        javasoundTime = System.currentTimeMillis();
                     }
+                    
+                    LOGGER.warning(String.format("Ran audio loop at %d in " + 
+                            "%d ms.\n  Calc: %d\n  Wait: %d\n  " +
+                            "Check: %d\n  Adjust: %d\n  javasound: %d\n" +
+                            "Buffer now: %d of %d\nQueue size now: %d\n",
+                            System.currentTimeMillis() - runTime,
+                            System.currentTimeMillis() - startTime, 
+                            calcTime - startTime, waitTime - calcTime, 
+                            checkTime - waitTime, adjustTime - checkTime, 
+                            javasoundTime - adjustTime,
+                            line.available(), line.getBufferSize(),
+                            size()));            
                 }
-
-                line.stop();
             } catch (InterruptedException ie) {
                 // break out of loop
             } finally {
@@ -860,17 +924,43 @@ public class VideoPlayerImpl implements VideoStateSource,
          * @return the buffer delay in microseconds 
          */
         private long bufferDelay() {
-            // get the number of bytes available
-            int bufferRemaining = line.getBufferSize() - line.available();
-
-            // convert to number of frames
-            bufferRemaining /= frameSize;
-
-            // calculate time in buffer in seconds
-            float bufferTime = bufferRemaining / frameRate;
-            long bufferTimeMicros = (long) (bufferTime * 1000000);
+            return getMicrosWritten() - line.getMicrosecondPosition();
+        }
+        
+        /**
+         * Calculate the number of milliseconds for the given number of bytes
+         * @param bytes a number of bytes, evenly divisible by the frame size
+         * @return the corresponding number of microseconds
+         */
+        private long bytesToMicroseconds(int bytes) {
+            // translate bytes to frames
+            double frames = bytes / frameSize;
             
-            return bufferTimeMicros;
+            // divide by frame rate to get time in seconds
+            double bufferTime = frames / frameRate;
+        
+            // convert to microseconds
+            return (long) (bufferTime * 1000000.0);
+        }
+        
+        private synchronized long getMicrosWritten() {
+            return microsWritten;
+        }
+        
+        private synchronized void setMicrosWritten(long micros) {
+            this.microsWritten = micros;
+        }
+        
+        private synchronized void microsWritten(long micros) {
+            microsWritten += micros;
+        }
+        
+        /**
+         * Adjust the timesource by the given timediff
+         * @param timeDiff the amount to adjust by
+         */
+        private void adjustTime(long time) {
+            timeSource.adjust(time);
         }
 
         @Override
@@ -882,6 +972,10 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             // clear javasound
             line.flush();
+            
+            // update our internal buffer tracking to show that we have
+            // read all data that was written
+            setMicrosWritten(line.getMicrosecondPosition());
         }
         
         private synchronized boolean isCleared() {
@@ -901,6 +995,9 @@ public class VideoPlayerImpl implements VideoStateSource,
         // ping timeout (in milliseconds)
         private static final long PING_TIMEOUT = 1000; 
         
+        // absolute time
+        private long startTime;
+        
         // the last time that was set
         private long setPTS;
         private long setTime;
@@ -910,7 +1007,7 @@ public class VideoPlayerImpl implements VideoStateSource,
         
         private Thread thread = null;
         private boolean quit = false;
-        
+                
         public synchronized void start(long pts) {
             LOGGER.warning("Start time source at " + (pts / 1000000.0));
             
@@ -920,6 +1017,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             setPTS = pts;
             setTime = System.nanoTime();
+            startTime = setTime;
             
             quit = false;
             
@@ -928,7 +1026,9 @@ public class VideoPlayerImpl implements VideoStateSource,
         }
         
         public synchronized void adjust(long pts) {
-            LOGGER.warning("Adjust time source to " + (pts / 1000000.0));
+            if (LOGGER.isLoggable(Level.FINE)) {
+                LOGGER.fine("Adjust time source to " + (pts / 1000000.0));
+            }
             
             setPTS = pts;
             setTime = System.nanoTime();
@@ -960,6 +1060,16 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             // add the difference to the initial PTS
             return setPTS + timeDiff;
+        }
+        
+        public synchronized long getWallTime() {
+            // the time difference in nanoseconds
+            long timeDiff = System.nanoTime() - startTime;
+            
+            // convert to microseconds
+            timeDiff /= 1000;
+            
+            return timeDiff;
         }
 
         public synchronized void ping() {

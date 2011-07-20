@@ -159,15 +159,23 @@ public class SwingVideoPlayer extends javax.swing.JFrame
             protected Object doInBackground() throws Exception {
                 try {
                     while (isPlaying()) {
+                        // set the target time to 30ms from now
+                        long sleepTarget = System.currentTimeMillis() + 30;
+                        
                         IVideoPicture frame = queue.nextFrame();
                         if (frame != null) {
                             Image image = converter.toImage(frame);
                             publish(new TimedImage(image, frame.getTimeStamp()));
                         }
 
-                        try {
-                            Thread.sleep(30);
-                        } catch (InterruptedException ie) {
+                        long now = System.currentTimeMillis();
+                        while (now < sleepTarget) {
+                            try {
+                                Thread.sleep(sleepTarget - now);
+                            } catch (InterruptedException ie) {
+                            }
+                            
+                            now = System.currentTimeMillis();
                         }
                     }
                 } catch (Throwable t) {

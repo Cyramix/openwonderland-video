@@ -15,7 +15,7 @@
  * subject to the "Classpath" exception as provided by the Open Wonderland
  * Foundation in the License file that accompanied this code.
  */
-package org.jdesktop.wonderland.client.utils;
+package org.jdesktop.wonderland.video.client;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,7 +27,7 @@ import java.util.logging.Logger;
 public class VideoLibraryLoader {
     private static final Logger LOGGER =
             Logger.getLogger(VideoLibraryLoader.class.getName());
-
+    
     private static final String[] LINUX_LIBRARIES = new String[] {
         // libraries with no dependencies
         "mp3lame", "ogg", "opencore-amrnb", "opencore-amrwb",
@@ -53,11 +53,15 @@ public class VideoLibraryLoader {
         // mac handles dependencies itself
         "xuggle-xuggler"
     };
+    
+    // the current library loader, or null to use the default
+    private static LibraryLoaderSPI libraryLoader = null;
 
     /**
-     * Load video libraries, and return whether load succeeded
+     * Get the libraries for the current platform in loading order
+     * @return the libraries in order that they should be loaded
      */
-    public static boolean loadVideoLibraries() {
+    public static String[] getPlatformLibraries() {
         String[] libraries = null;
 
         if (System.getProperty("os.name").startsWith("Linux")) {
@@ -67,6 +71,15 @@ public class VideoLibraryLoader {
         } else if (System.getProperty("os.name").startsWith("Mac OS X")) {
             libraries = MACOSX_LIBRARIES;
         }
+        
+        return libraries;
+    }
+    
+    /**
+     * Load video libraries, and return whether load succeeded
+     */
+    public static boolean loadVideoLibraries() {
+        String[] libraries = getPlatformLibraries();
 
         // if we don't have libraries to load, the platform is not supported
         if (libraries == null) {
@@ -81,6 +94,42 @@ public class VideoLibraryLoader {
         } catch (Throwable t) {
             LOGGER.log(Level.WARNING, "Error loading library", t);
             return false;
+        }
+    }
+    
+    /**
+     * Get the library loader
+     * @return the library loader
+     */
+    public synchronized static LibraryLoaderSPI getLibraryLoader() {
+        if (libraryLoader == null) {
+            return new DefaultLibraryLoader();
+        }
+        
+        return libraryLoader;
+    }
+    
+    /**
+     * Set the library loader
+     * @param loader the library loader
+     */
+    public synchronized static void setLibraryLoader(LibraryLoaderSPI loader) {
+        libraryLoader = loader;
+    }
+    
+    public interface LibraryLoaderSPI {
+        public boolean loadLibrary(String library);
+    }
+    
+    static class DefaultLibraryLoader implements LibraryLoaderSPI {
+        public boolean loadLibrary(String library) {
+            try {
+                System.loadLibrary(library);
+                return true;
+            } catch (Throwable t) {
+                LOGGER.log(Level.WARNING, "Error loading library", t);
+                return false;
+            }
         }
     }
 }

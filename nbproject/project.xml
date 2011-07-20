@@ -8,11 +8,6 @@
             <properties/>
             <folders>
                 <source-folder>
-                    <label>core-src</label>
-                    <type>java</type>
-                    <location>core-src</location>
-                </source-folder>
-                <source-folder>
                     <label>src</label>
                     <type>java</type>
                     <location>src</location>
@@ -36,10 +31,6 @@
             <view>
                 <items>
                     <source-folder style="packages">
-                        <label>core-src</label>
-                        <location>core-src</location>
-                    </source-folder>
-                    <source-folder style="packages">
                         <label>src</label>
                         <location>src</location>
                     </source-folder>
@@ -49,6 +40,9 @@
                     </source-folder>
                     <source-file>
                         <location>build.xml</location>
+                    </source-file>
+                    <source-file>
+                        <location>logging.properties</location>
                     </source-file>
                 </items>
                 <context-menu>
@@ -61,10 +55,6 @@
             <subprojects/>
         </general-data>
         <java-data xmlns="http://www.netbeans.org/ns/freeform-project-java/1">
-            <compilation-unit>
-                <package-root>core-src</package-root>
-                <source-level>1.5</source-level>
-            </compilation-unit>
             <compilation-unit>
                 <package-root>src</package-root>
                 <classpath mode="compile">build/classes:lib/xuggle-xuggler.jar</classpath>
