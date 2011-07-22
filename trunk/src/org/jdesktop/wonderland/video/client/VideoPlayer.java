@@ -25,7 +25,7 @@ package org.jdesktop.wonderland.video.client;
 public interface VideoPlayer {
 
     public enum VideoPlayerState {
-        NO_MEDIA, MEDIA_READY, PAUSED, PLAYING
+        NO_MEDIA, MEDIA_READY, PAUSED, PLAYING, STOPPED
     };
 
     /**

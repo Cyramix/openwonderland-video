@@ -88,7 +88,7 @@ public class VideoLibraryLoader {
 
         try {
             for (String library : libraries) {
-                System.loadLibrary(library);
+                getLibraryLoader().loadLibrary(library);
             }
             return true;
         } catch (Throwable t) {

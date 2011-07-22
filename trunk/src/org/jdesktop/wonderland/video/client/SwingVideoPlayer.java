@@ -96,6 +96,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                 break;
                 
             case MEDIA_READY:
+            case STOPPED:
                 playButton.setEnabled(true);
                 stopButton.setEnabled(false);
                 pauseButton.setEnabled(false);
