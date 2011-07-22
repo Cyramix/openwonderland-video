@@ -71,6 +71,10 @@ public class VideoQueueFiller implements Runnable {
         this.queue = queue;
     }
 
+    protected VideoQueue getQueue() {
+        return queue;
+    }
+    
     public Dimension getSize() {
         Dimension out = new Dimension();
 
@@ -190,7 +194,11 @@ public class VideoQueueFiller implements Runnable {
             // fill the queue until we are done running
             try {
                 while (!Thread.interrupted() && !isQuit()) {
-                    fillQueue();
+                    if (!fillQueue()) {
+                        // video is done
+                        queue.finished();
+                        break;
+                    }
                 }
             } catch (InterruptedException ie) {
                 // break out of loop
@@ -335,7 +343,7 @@ public class VideoQueueFiller implements Runnable {
      * Called by the queue filler thread to block until the next packet is
      * available
      */
-    private void fillQueue() throws InterruptedException {
+    private boolean fillQueue() throws InterruptedException {
         // check if we need to seek
         SeekOperation curSeek;
         boolean loaded;
@@ -352,7 +360,8 @@ public class VideoQueueFiller implements Runnable {
         
         // Now, we start walking through the container looking at each packet.
         IPacket packet = IPacket.make();
-        if (container.readNextPacket(packet) >= 0) {
+        int res = container.readNextPacket(packet);
+        if (res >= 0) {
             // if we found the first packet, notify everyone that the media is
             // completely loaded
             if (!loaded) {
@@ -406,9 +415,22 @@ public class VideoQueueFiller implements Runnable {
                 // times at different offsets in the packet's data.  We capture that here.
                 int offset = 0;
 
+                // figure out the frame count, so we can guess how much data we are going
+                // to get. This is a bit dangerous, since some coders give you the wrong
+                // value for frame size, and some packets give you the wrong value for
+                // duration. Hopefully we will be safe if we just take the bigger of the
+                // two
+                long packetSamples = packet.getDuration() * 
+                                     packet.getTimeBase().getNumerator() *
+                                     audioCoder.getSampleRate();
+                packetSamples /= audioCoder.getTimeBase().getDenominator();
+                
+                long frameCount = Math.max(audioCoder.getAudioFrameSize(), 
+                                           packetSamples); 
+                
                 // we only want to pass a single object to the receiver per packet, so we
-                // need to store all audio data for this packet in a single buffer
-                long dataSize = packet.getDuration() * audioCoder.getChannels() *
+                // need to store all audio data for this packet in a single buffer.
+                long dataSize = frameCount * audioCoder.getChannels() *
                                 IAudioSamples.findSampleBitDepth(audioCoder.getSampleFormat());
                 dataSize /= 8;
                 
@@ -455,14 +477,18 @@ public class VideoQueueFiller implements Runnable {
                 }
                 
                 // at this point, if we never set the PTS, it means we were
-                // seeking and there is no packet to write
-                if (ptsSet) {
+                // seeking and there is no packet to write. If data is null,
+                // it means we wrote the data in chunks above
+                if (ptsSet && data != null) {
                     LOGGER.fine("Add audio to queue at " + (pts / 1000000.0));
                     AudioFrame frame = new AudioFrame(pts, data, dataLength);
                     queue.add(frame);
                 }
             }
         }
+        
+        // if the result was < 0, we are done reading
+        return (res >= 0);
     }
     
     private void performSeek(SeekOperation curSeek) {
@@ -689,6 +715,11 @@ public class VideoQueueFiller implements Runnable {
          * Clear the current queue of packets.
          */
         public void clear();
+    
+        /**
+         * Notification that the video has finished playing
+         */
+        public void finished();
     }
     
     public static class AudioFrame {

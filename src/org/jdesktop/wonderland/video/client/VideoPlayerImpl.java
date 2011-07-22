@@ -40,6 +40,7 @@ import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 import org.jdesktop.wonderland.video.client.FrameListener.FrameQueue;
 import org.jdesktop.wonderland.video.client.VideoQueueFiller.AudioFrame;
+import org.jdesktop.wonderland.video.client.VideoQueueFiller.VideoQueue;
 
 /**
  * Streaming video player for xuggler video library.
@@ -83,11 +84,30 @@ public class VideoPlayerImpl implements VideoStateSource,
     private boolean needsPreview = true;
     private double lastFrameTime;
     
+    private boolean finished = false;
+    
     public VideoPlayerImpl() {
         audioQueue = new AudioThread();
         frameQueue = new LinkedBlockingQueue<IVideoPicture>(4);
-
-        queueFiller = new VideoQueueFiller(this);
+    
+        queueFiller = createQueueFiller(this);
+    }
+    
+    /**
+     * Create a video queue filler
+     * @param queue the video queue to use
+     * @return the queue filler to use
+     */
+    protected VideoQueueFiller createQueueFiller(VideoQueue queue) {
+        return new VideoQueueFiller(queue);
+    }
+    
+    /**
+     * Get the video queue filler
+     * @return the video queue filler
+     */
+    protected VideoQueueFiller getQueueFiller() {
+        return queueFiller;
     }
 
     /**
@@ -218,6 +238,7 @@ public class VideoPlayerImpl implements VideoStateSource,
                 stop(false);
                 
                 try {
+                    setFinished(false);
                     queueFiller.openMedia(mediaURI);
                     setState(VideoPlayerState.MEDIA_READY);
                 } finally {
@@ -268,7 +289,11 @@ public class VideoPlayerImpl implements VideoStateSource,
         // make sure the queue is not empty
         IVideoPicture out = frameQueue.peek();
         if (out == null) {
-            // empty queue
+            // empty queue -- is the video finished?
+            if (isFinished()) {
+                stop();
+            }
+            
             return null;
         }
 
@@ -371,6 +396,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             setState(VideoPlayerState.PLAYING);
 
             // read packets from the queue
+            setFinished(false);
             queueFiller.enable();
 
             // start the time source with the first packet to play
@@ -440,8 +466,9 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             // restart the queue filler at the beginning of the media
             if (restart) {
+                setFinished(false);
                 queueFiller.enable();
-                setState(VideoPlayerState.MEDIA_READY);
+                setState(VideoPlayerState.STOPPED);
             }
         }
     }
@@ -521,7 +548,9 @@ public class VideoPlayerImpl implements VideoStateSource,
         
         notifyStateListeners(oldState, mediaState);
     
-        if (state == VideoPlayerState.MEDIA_READY) {
+        if (state == VideoPlayerState.MEDIA_READY || 
+            state == VideoPlayerState.STOPPED) 
+        {
             setNeedsPreview(true);
         }
     }
@@ -591,6 +620,20 @@ public class VideoPlayerImpl implements VideoStateSource,
         if (resetTimeSource) {
             timeSource.stop();
         }
+    }
+    
+    @Override
+    public void finished() {
+        // notification that there is no more data
+        setFinished(true);
+    }
+    
+    private synchronized void setFinished(boolean finished) {
+        this.finished = finished;
+    }
+    
+    private synchronized boolean isFinished() {
+        return finished;
     }
     
     private void startTimeSource() {
@@ -896,17 +939,19 @@ public class VideoPlayerImpl implements VideoStateSource,
                         javasoundTime = System.currentTimeMillis();
                     }
                     
-                    LOGGER.warning(String.format("Ran audio loop at %d in " + 
-                            "%d ms.\n  Calc: %d\n  Wait: %d\n  " +
-                            "Check: %d\n  Adjust: %d\n  javasound: %d\n" +
-                            "Buffer now: %d of %d\nQueue size now: %d\n",
-                            System.currentTimeMillis() - runTime,
-                            System.currentTimeMillis() - startTime, 
-                            calcTime - startTime, waitTime - calcTime, 
-                            checkTime - waitTime, adjustTime - checkTime, 
-                            javasoundTime - adjustTime,
-                            line.available(), line.getBufferSize(),
-                            size()));            
+                    if (LOGGER.isLoggable(Level.FINE)) {
+                        LOGGER.fine(String.format("Ran audio loop at %d in " + 
+                                "%d ms.\n  Calc: %d\n  Wait: %d\n  " +
+                                "Check: %d\n  Adjust: %d\n  javasound: %d\n" +
+                                "Buffer now: %d of %d\nQueue size now: %d\n",
+                                System.currentTimeMillis() - runTime,
+                                System.currentTimeMillis() - startTime, 
+                                calcTime - startTime, waitTime - calcTime, 
+                                checkTime - waitTime, adjustTime - checkTime, 
+                                javasoundTime - adjustTime,
+                                line.available(), line.getBufferSize(),
+                                size()));            
+                    }
                 }
             } catch (InterruptedException ie) {
                 // break out of loop
