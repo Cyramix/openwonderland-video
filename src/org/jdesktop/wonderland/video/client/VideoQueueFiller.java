@@ -178,7 +178,15 @@ public class VideoQueueFiller implements Runnable {
         // clear the client buffers (which will force fillQueue to run)
         queue.clear();
     }
-
+    
+    /**
+     * Return whether or not the queue filler is currently seeking.
+     * @return true if either audio or video is currently seeking
+     */
+    public synchronized boolean isSeeking() {
+        return (seek != null);
+    }
+    
     @Override
     public void run() {         
         synchronized (this) {
@@ -519,16 +527,7 @@ public class VideoQueueFiller implements Runnable {
                 canSeek = true;
             }
         }
-        
-        // flush buffers
-        if (videoCoder != null) {
-            //videoCoder.flushBuffers();
-        }
-
-        if (audioCoder != null) {
-            //audioCoder.flushBuffers();
-        }
-
+       
         // notify the listener to clear as well. We already did this once
         // during the call to seek() to ensure the fillQueues() would run,
         // but we need to do it again here to get rid of any data that
