@@ -30,14 +30,20 @@ import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
+import javax.sound.sampled.LineEvent;
+import javax.sound.sampled.LineListener;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
+import org.jdesktop.wonderland.video.client.AudioInputStream.ReadTimeout;
 import org.jdesktop.wonderland.video.client.FrameListener.FrameQueue;
 import org.jdesktop.wonderland.video.client.VideoQueueFiller.AudioFrame;
 import org.jdesktop.wonderland.video.client.VideoQueueFiller.VideoQueue;
@@ -65,7 +71,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             new CopyOnWriteArrayList<FrameListener>();
 
     // time source
-    private final SystemClockTimeSource timeSource = new SystemClockTimeSource();
+    //private final SystemClockTimeSource timeSource = new SystemClockTimeSource();
     
     private String mediaURI;
     private VideoPlayerState mediaState = VideoPlayerState.NO_MEDIA;
@@ -263,19 +269,16 @@ public class VideoPlayerImpl implements VideoStateSource,
     @Override
     public synchronized IVideoPicture nextFrame() {
         // if the time source is not running, there is no next frame
-        if (!timeSource.isStarted()) {
+        if (!audioQueue.isRunning()) {
             return null;
         }
                 
         // find the target time
-        long targetPTS = timeSource.getCurrentPTS();
+        long targetPTS = audioQueue.getCurrentPTS();
 
         if (LOGGER.isLoggable(Level.FINE)) {
-            LOGGER.fine("Video packet" +
-                        " wall: " + (timeSource.getWallTime() / 1000000.0) +
-                        " time source: " + (timeSource.getCurrentPTS() / 1000000.0) +
-                        " line: " + (line.getMicrosecondPosition() / 1000000.0) +
-                        " wall diff: " + ((timeSource.getWallTime() - line.getMicrosecondPosition()) / 1000000.0));
+            LOGGER.fine(String.format("Video packet line time: %d. " +
+                        "Wall time: %d", targetPTS, audioQueue.getWallTime()));
         }
         
         boolean logStats = LOGGER.isLoggable(Level.FINE);
@@ -398,13 +401,8 @@ public class VideoPlayerImpl implements VideoStateSource,
             // read packets from the queue
             setFinished(false);
             queueFiller.enable();
-
-            // start the time source with the first packet to play
-            startTimeSource();
-            
-            // start audio
             audioQueue.start();
-
+            
             // notify listeners
             notifyFrameListenersPlay(this);
         }
@@ -425,11 +423,8 @@ public class VideoPlayerImpl implements VideoStateSource,
 
         if (isPlayable() && (getState() != VideoPlayerState.PAUSED)) {
             setState(VideoPlayerState.PAUSED);
-
-            audioQueue.stop();
+            audioQueue.close();
             frameQueue.clear();
-            timeSource.stop();
-            
             setNeedsPreview(true);
         }
     }
@@ -454,9 +449,8 @@ public class VideoPlayerImpl implements VideoStateSource,
         {
             // stop the current video
             queueFiller.disable();
-            audioQueue.stop();
+            audioQueue.close();
             frameQueue.clear();
-            timeSource.stop();
             
             // remove any leftover frames
             notifyFrameListenersStop();
@@ -567,14 +561,7 @@ public class VideoPlayerImpl implements VideoStateSource,
     @Override
     public void newStream(int id, IStreamCoder coder) {
         if (coder.getCodecType() == ICodec.Type.CODEC_TYPE_AUDIO) {
-            try {
-                LOGGER.warning("Open java sound");
-                line = openJavaSound(coder);
-                
-                audioQueue.setLine(line);
-            } catch (LineUnavailableException ex) {
-                LOGGER.log(Level.WARNING, "Error opening line", ex);
-            }
+            audioQueue.setAudioCoder(coder);
         } else if (coder.getCodecType() == ICodec.Type.CODEC_TYPE_VIDEO) {
             // calculate how long each frame should be visible -- used
             // in picking frames during getNextFrame();
@@ -587,6 +574,8 @@ public class VideoPlayerImpl implements VideoStateSource,
 
     @Override
     public void add(IVideoPicture picture) throws InterruptedException {
+        updateTimeSource(picture.getTimeStamp());
+
         // do we need a preview frame
         if (isNeedsPreview()) {
             notifyFrameListenersPreview(picture);
@@ -595,31 +584,24 @@ public class VideoPlayerImpl implements VideoStateSource,
         }
 
         frameQueue.put((IVideoPicture) picture);   
-        pingTimeSource();
     }
     
     @Override
     public void add(AudioFrame frame) throws InterruptedException {
+        updateTimeSource(frame.getPTS());
         audioQueue.add(frame);
-        pingTimeSource();
     }
     
     @Override
     public void clear() {
-        clear(true);
-    }
-    
-    private void clear(boolean resetTimeSource) {
         LOGGER.warning("Clear");
         
+        // remove all pending video frames
         frameQueue.clear();
-        audioQueue.clear();
         
-        // stop the time source -- it will be restarted the next time data
-        // is added to the queue
-        if (resetTimeSource) {
-            timeSource.stop();
-        }
+        // stop the audio queue. If the video is still playing, the queue
+        // will automatically be restarted the first time a packet is added
+        audioQueue.close();
     }
     
     @Override
@@ -636,37 +618,27 @@ public class VideoPlayerImpl implements VideoStateSource,
         return finished;
     }
     
-    private void startTimeSource() {
-        if (timeSource.isStarted()) {
-            return;
+    private void updateTimeSource(long timestamp) {
+        // open the queue if this is the first packet we see. This automatically
+        // sets the start time of the queue to the PTS of the first packet after
+        // a clear
+        if (!audioQueue.isOpen()) {
+           LOGGER.fine("Open time source at time " + (timestamp / 1000000.0));
+            audioQueue.open(timestamp);
         }
         
-        // find the first time by looking at the first element in the audio
-        // and video queue
-        long videoTime = Long.MAX_VALUE;
-        long audioTime = Long.MAX_VALUE;
-        
-        if (!frameQueue.isEmpty()) {
-            videoTime = frameQueue.peek().getPts();
-        }
-        
-        if (!audioQueue.isEmpty()) {
-            audioTime = audioQueue.peek().getPTS();
-        }
-        
-        LOGGER.fine("Start time source: audio: " + audioTime + 
-                       " video: " + videoTime);
-        
-        timeSource.start(Math.min(audioTime, videoTime));
-    }
-    
-    private void pingTimeSource() {
-        // if we are playing but the time source is not started, start it
-        // with the time from the first packet we receive
-        if (getState() == VideoPlayerState.PLAYING && !timeSource.isStarted()) {
-            startTimeSource();
-        } else {
-            timeSource.ping();
+        // automatically restart the time source if the video is currently
+        // playing and we aren't seeking. In the case of a seek, this will 
+        // restart the playback as soon as both the audio and video queues
+        // have content. Note that we wait for the frame queue to fill to
+        // one less than capacity, indicating that all video frames have
+        // be cached for writing
+        if (!audioQueue.isRunning() &&  
+            getState() == VideoPlayerState.PLAYING && 
+            !queueFiller.isSeeking() &&
+            frameQueue.remainingCapacity() == 1) 
+        {
+            audioQueue.start();
         }
     }
 
@@ -700,10 +672,6 @@ public class VideoPlayerImpl implements VideoStateSource,
     {
         // we're just going to dump all the samples into the line
         if (line != null) {
-            if (line.available() == line.getBufferSize()) {
-                LOGGER.warning("Audio underrun!");
-            }
-            
             line.write(rawBytes, 0, length);
         }
     }
@@ -767,391 +735,238 @@ public class VideoPlayerImpl implements VideoStateSource,
     private synchronized void setNeedsPreview(boolean needsPreview) {
         this.needsPreview = needsPreview;
     }
-
-    class AudioThread extends ArrayBlockingQueue<AudioFrame> implements Runnable {
-        // the maximum delay, in microseconds, before we decalare a packet as
-        // early and wait for the proper time to play it
-        private static final int MAX_DELAY = 50000;
+    
+    class AudioThread implements Runnable, ReadTimeout {
+        private IStreamCoder audioCoder;
+        private SourceDataLine line;
+        private int frameSize;
+        private byte[] buffer;
         
         private Thread thread;
-        private boolean quit = false;
-        private boolean cleared = false;
+        private boolean quit;
+        private AudioInputStream audioStream;
         
-        private float frameSize;
-        private float frameRate;
+        private long startPTS;
+        private long lineStartTime;
+        private long bytesWritten;
+        private long wallTime;
+        private boolean firstRead;
         
-        private long microsWritten;
-        
-        public AudioThread() {
-            super (256);
-        }
-
-        public synchronized void setLine(SourceDataLine line) {
-            // variables used in calculating buffer delay
-            frameSize = line.getFormat().getFrameSize();
-            frameRate = line.getFormat().getFrameRate();
+        public synchronized void setAudioCoder(IStreamCoder audioCoder) {
+            this.audioCoder = audioCoder;
         }
         
-        public synchronized void start() {       
-            if (thread != null) {
-                // already started
-                LOGGER.warning("Audio thread already started");
-                return;
-            }
-
-            thread = new Thread(this, "Audio queue filler");
-            quit = false;
+        public synchronized void open(long startPTS) {
+            this.startPTS = startPTS;
+            audioStream = new AudioInputStream();
             
-            LOGGER.warning("Start line at " + (timeSource.getCurrentPTS() / 1000000.0));
-            line.start();
-            thread.start();
-        }
-
-        public synchronized void stop() {
-            if (thread == null) {
-                // already stopped
-                LOGGER.warning("Audio thread already stopped");
-                return;
-            }
-
-            quit = true;
-            line.stop();
+            int sampleRate = audioCoder.getSampleRate();
+            int channels = audioCoder.getChannels();
+            float sampleSize = 
+                    IAudioSamples.findSampleBitDepth(audioCoder.getSampleFormat());
             
-            if (thread != null) {
-                thread.interrupt();
-            }
-
-            clear();
-
-            // wait for thread to exit
-            try {
-                while (thread != null) {
-                    wait();
-                }
-            } catch (InterruptedException ie) {
-                // break out of loop
-            }
-        }
-
-        @Override
-        public void run() {
-            LOGGER.warning("Start audio thread with: " + this.size() + " packets");
+            audioStream.start(startPTS, sampleRate,
+                              (int) (sampleSize * channels));
             
-            long runTime = System.currentTimeMillis();
-            long startTime = 0;
-            long calcTime = 0;
-            long waitTime = 0;
-            long checkTime = 0;
-            long adjustTime = 0;
-            long javasoundTime = 0;
-                    
-            try {                
-                while (!isQuit()) {
-                    startTime = System.currentTimeMillis();
-                    
-                    AudioFrame sample = take();
-                    if (sample != null) {
-                        // figure out the estimaged play time (the current PTS + the
-                        // time needed for this packet to get through the buffer)
-                        long delay = bufferDelay();
-                        long playTime = timeSource.getCurrentPTS() + delay;
-                        
-                        // wait until it is time to put this packet on the buffer
-                        long timeDiff = sample.getPTS() - playTime;
-                        
-                        if (LOGGER.isLoggable(Level.FINE)) {
-                            LOGGER.fine("Load audio at " + (sample.getPTS() / 1000000.0) + 
-                                        " Wall: " + (timeSource.getWallTime() / 1000000.0) +
-                                        " Timesource: " + (timeSource.getCurrentPTS() / 1000000.0) +
-                                        " Line: " + (line.getMicrosecondPosition() / 1000000.0) +
-                                        " Delay: " + (delay / 1000000.0) +
-                                        " Play time: " + (playTime / 1000000.0) + 
-                                        " Time diff: " + (timeDiff / 1000000.0) +
-                                        " Buffer: " + line.available());
-                        }
-                        
-                        calcTime = System.currentTimeMillis();
-                        
-                        while (timeDiff > MAX_DELAY && !isCleared() && !isQuit()) {
-                            if (LOGGER.isLoggable(Level.WARNING)) {
-                                LOGGER.warning("Audio early: " + (timeDiff / 1000000.0));;
-                            }
-                            
-                            // sleep up to 50 milliseconds and recheck
-                            long millisDelay = Math.min(timeDiff / 1000, 50);
-                            int nanosDelay = ((int) (timeDiff % 1000)) * 1000;
-                            
-                            Thread.sleep(millisDelay, nanosDelay);
-                            
-                            playTime = timeSource.getCurrentPTS() + bufferDelay();
-                            timeDiff = sample.getPTS() - playTime;
-                        }
-                        
-                        waitTime = System.currentTimeMillis();
-                        
-                        // before we play the packet, make sure we are not
-                        // quit or cleared
-                        if (isQuit()) {
-                            break;
-                        }
-                        
-                        if (isCleared()) {
-                            // acknowledge the clear and move on
-                            setCleared(false);
-                            continue;
-                        }
-                        
-                        checkTime = System.currentTimeMillis();
-                        
-                        // at this point, add the sample to the queue
-                        byte[] rawBytes = sample.getData();
-                        int length = sample.getLength();
-                        
-                        byte[] adjustedBytes = adjustVolume(line, getVolume(), 
-                                                            rawBytes, 0, length);
-                        
-                        // before we actually play the sample, calculate the
-                        // implied time -- this is the time the packet is
-                        // supposed to play minus the delay that it will
-                        // experience in the buffer. We adjust the time source
-                        // based on this implied time so video will stay in
-                        // sync with the audio. 
-                        // 
-                        // Note we do this before adding data to the buffer,
-                        // which would change the buffer delay and potentially
-                        // block
-                        long adjustedTime = sample.getPTS() - bufferDelay();
-                        adjustTime(adjustedTime);
-                        
-                        adjustTime = System.currentTimeMillis();
-                        
-                        // with everything adjusted, we make the call to
-                        // javasound (which could block)
-                        playJavaSound(line, adjustedBytes, length);
-                    
-                        if (LOGGER.isLoggable(Level.FINE)) {
-                            LOGGER.fine("Played audio at " + (sample.getPTS() / 1000000.0) + 
-                                        " Time source: " + (timeSource.getCurrentPTS() / 1000000.0));
-                        }
-                        
-                        microsWritten(bytesToMicroseconds(length));
-                        
-                        javasoundTime = System.currentTimeMillis();
-                    }
-                    
-                    if (LOGGER.isLoggable(Level.FINE)) {
-                        LOGGER.fine(String.format("Ran audio loop at %d in " + 
-                                "%d ms.\n  Calc: %d\n  Wait: %d\n  " +
-                                "Check: %d\n  Adjust: %d\n  javasound: %d\n" +
-                                "Buffer now: %d of %d\nQueue size now: %d\n",
-                                System.currentTimeMillis() - runTime,
-                                System.currentTimeMillis() - startTime, 
-                                calcTime - startTime, waitTime - calcTime, 
-                                checkTime - waitTime, adjustTime - checkTime, 
-                                javasoundTime - adjustTime,
-                                line.available(), line.getBufferSize(),
-                                size()));            
-                    }
-                }
-            } catch (InterruptedException ie) {
-                // break out of loop
-            } finally {
-                synchronized (this) {
-                    thread = null;
-                    notify();
-                }
-            }
         }
         
-        /**
-         * Calculate the approximate buffer delay (in microseconds) for the
-         * buffer.
-         * @return the buffer delay in microseconds 
-         */
-        private long bufferDelay() {
-            return getMicrosWritten() - line.getMicrosecondPosition();
+        public synchronized boolean isOpen() {
+            return audioStream != null;
         }
         
-        /**
-         * Calculate the number of milliseconds for the given number of bytes
-         * @param bytes a number of bytes, evenly divisible by the frame size
-         * @return the corresponding number of microseconds
-         */
-        private long bytesToMicroseconds(int bytes) {
-            // translate bytes to frames
-            double frames = bytes / frameSize;
-            
-            // divide by frame rate to get time in seconds
-            double bufferTime = frames / frameRate;
-        
-            // convert to microseconds
-            return (long) (bufferTime * 1000000.0);
+        public void add(AudioFrame frame) {
+            audioStream.add(frame);
         }
         
-        private synchronized long getMicrosWritten() {
-            return microsWritten;
-        }
-        
-        private synchronized void setMicrosWritten(long micros) {
-            this.microsWritten = micros;
-        }
-        
-        private synchronized void microsWritten(long micros) {
-            microsWritten += micros;
-        }
-        
-        /**
-         * Adjust the timesource by the given timediff
-         * @param timeDiff the amount to adjust by
-         */
-        private void adjustTime(long time) {
-            timeSource.adjust(time);
-        }
-
-        @Override
-        public void clear() {
-            super.clear();
-        
-            // set a variable for the queue filler
-            setCleared(true);
-            
-            // clear javasound
-            line.flush();
-            
-            // update our internal buffer tracking to show that we have
-            // read all data that was written
-            setMicrosWritten(line.getMicrosecondPosition());
-        }
-        
-        private synchronized boolean isCleared() {
-            return cleared;
-        }
-        
-        private synchronized void setCleared(boolean cleared) {
-            this.cleared = cleared;
-        }
-        
-        private synchronized boolean isQuit() {
-            return quit;
-        }
-    }
- 
-    private class SystemClockTimeSource implements Runnable {
-        // ping timeout (in milliseconds)
-        private static final long PING_TIMEOUT = 1000; 
-        
-        // absolute time
-        private long startTime;
-        
-        // the last time that was set
-        private long setPTS;
-        private long setTime;
-        
-        // last ping time
-        private long lastPing;
-        
-        private Thread thread = null;
-        private boolean quit = false;
-                
-        public synchronized void start(long pts) {
-            LOGGER.warning("Start time source at " + (pts / 1000000.0));
-            
-            if (thread != null) {
+        public synchronized void start() {
+            if (isRunning()) {
                 throw new IllegalStateException("Already started");
             }
             
-            setPTS = pts;
-            setTime = System.nanoTime();
-            startTime = setTime;
-            
             quit = false;
             
-            thread = new Thread(this, "Video time source");
+            thread = new Thread(this, "Audio player thread");
             thread.start();
         }
         
-        public synchronized void adjust(long pts) {
-            if (LOGGER.isLoggable(Level.FINE)) {
-                LOGGER.fine("Adjust time source to " + (pts / 1000000.0));
+        public synchronized void stop() {
+            quit = true;
+            
+            try {
+                while (isRunning()) {
+                    thread.interrupt();
+                    wait();
+                } 
+            } catch (InterruptedException ie) {
             }
             
-            setPTS = pts;
-            setTime = System.nanoTime();
+            if (line != null) {
+                line.close();
+            }
         }
         
-        public synchronized boolean isStarted() {
+        public synchronized void close() {
+            stop();
+            
+            if (audioStream != null) {
+                audioStream.clear();
+                audioStream = null;
+            }
+            
+            if (line != null) {
+                line.flush();
+            }
+        }
+        
+        public synchronized boolean isRunning() {
             return thread != null;
         }
         
-        public synchronized void stop() {
-            LOGGER.warning("Stop time source");
-            
-            quit = true;
-            notify();
-            
-            try {
-                while (thread != null) {
-                    wait();
-                }
-            } catch (InterruptedException ie) {}
-        }
-
         public synchronized long getCurrentPTS() {
-            // the time difference in nanoseconds
-            long timeDiff = System.nanoTime() - setTime;
+            if (line == null) {
+                return startPTS;
+            }
             
-            // convert to microseconds
-            timeDiff /= 1000;
-            
-            // add the difference to the initial PTS
-            return setPTS + timeDiff;
+            return startPTS + line.getMicrosecondPosition() - lineStartTime;
         }
         
         public synchronized long getWallTime() {
-            // the time difference in nanoseconds
-            long timeDiff = System.nanoTime() - startTime;
-            
-            // convert to microseconds
-            timeDiff /= 1000;
-            
-            return timeDiff;
+            return (System.nanoTime() - wallTime) / 1000;
         }
-
-        public synchronized void ping() {
-            lastPing = System.currentTimeMillis();
-        }
-
+        
         public void run() {
-            // initial time
-            lastPing = System.currentTimeMillis();
-            
             try {
+                line = openJavaSound(audioCoder);
+                setLine(line);
+               
+                line.start();
+            
+                synchronized (this) {
+                    // start with the number of bytes already in the line
+                    bytesWritten = line.getLongFramePosition() * frameSize;
+            
+                    // record the start time of the line
+                    lineStartTime = line.getMicrosecondPosition();
+            
+                    // record the wall time we started as well for comparison
+                    wallTime = System.nanoTime();
+                }
+            
+                if (LOGGER.isLoggable(Level.FINE)) {
+                    LOGGER.fine(String.format("Start audio thread: bytes = " +
+                                "%d lineStartTime = %d", bytesWritten, 
+                                lineStartTime));
+                }
+            
                 while (!isQuit()) {
-                    // see if there has been a timeout
-                    
-                    if (System.currentTimeMillis() - getLastPing() > PING_TIMEOUT) {
-                        LOGGER.warning("Ping timeout");
-                        clear(false);
-                        break;
-                    }
-                    
-                    // wait until the next timeout
-                    synchronized (this) {
-                        try {
-                            wait(PING_TIMEOUT);
-                        } catch (InterruptedException ie) {}
+                    try {
+                        fillBuffer();
+                    } catch (InterruptedException ie) {
+                        // if quit is true, we will now break out of the loop
                     }
                 }
-            } finally {
+                
+                if (LOGGER.isLoggable(Level.FINE)) {
+                    LOGGER.fine(String.format("Stop audio thread: bytes = %d " +
+                                " lineEndTime = %d", bytesWritten, 
+                                line.getMicrosecondPosition()));
+                }
+                
+                closeJavaSound(line);
+            } catch (LineUnavailableException lue) {
+                LOGGER.log(Level.WARNING, "Line unavailable", lue);
+            } finally {                
                 synchronized (this) {
                     thread = null;
-                    notify();
+                    notifyAll();
                 }
+            }
+        }      
+        
+        private void fillBuffer() throws InterruptedException {
+            // calculate the minimum amound of data to read, rounded up
+            // to the nearest frame
+            int minBytes = audioStream.microsecondsToBytes(20000);
+            if (minBytes % frameSize != 0) {
+                minBytes += frameSize - (minBytes % frameSize);
+            }            
+            
+            if (LOGGER.isLoggable(Level.FINE)) {
+                LOGGER.fine(String.format("Fill audio buffer at %d " +
+                            "microseconds. Wall time: %d.", 
+                            line.getMicrosecondPosition(), getWallTime()));
+            }
+            
+            // read data from the input stream 
+            int read = audioStream.read(buffer, minBytes, this);
+            
+            // adjust volume manually, since doing it via javasound is
+            // unreliable
+            byte[] adjusted = adjustVolume(line, volume, buffer, 0, read);
+            
+            // check for buffer underrun
+            long lineBytes = line.getLongFramePosition() * frameSize;
+            if (lineBytes == bytesWritten) {
+                LOGGER.warning("Audio underrun");
+            }
+            
+            if (LOGGER.isLoggable(Level.FINE)) {
+                LOGGER.fine(String.format("Fill audio buffer read %d bytes at " +
+                            "%d microseconds. Write %d microseconds to " +
+                            " line. Wall time: %d.", 
+                            read, line.getMicrosecondPosition(), 
+                            audioStream.bytesToMicroseconds(read),
+                            getWallTime()));
+            }
+            
+            // send data to JavaSound
+            playJavaSound(line, adjusted, read);
+            
+            // update our internal tracking
+            synchronized (this) {
+                bytesWritten += read;
             }
         }
         
-        private synchronized long getLastPing() {
-            return lastPing;
+        public synchronized long getReadTimeout() {
+            // estimate how long it will take to use all the data in the
+            // audio buffer
+            long lineBytes = line.getLongFramePosition() * frameSize;
+            long bufferBytes = bytesWritten - lineBytes;
+            long bufferMicros = audioStream.bytesToMicroseconds(bufferBytes);
+            
+            // special case -- if this is the first read after the buffer
+            // has started, give some time to fill the initial buffer
+            if (firstRead) {
+                firstRead = false;
+                bufferMicros = 20000;
+            }
+            
+            if (LOGGER.isLoggable(Level.FINE)) {
+                LOGGER.fine(String.format("Read timeout %d (line %d, " +
+                            "buffer %d) at wall time %d",
+                            bufferMicros, lineBytes, bufferMicros,
+                            getWallTime()));
+            }
+            
+            return Math.max(bufferMicros, 0);
+        }
+        
+        private void setLine(SourceDataLine line) {
+            this.line = line;
+            this.buffer = new byte[line.getBufferSize() / 4];
+            this.frameSize = line.getFormat().getFrameSize();
+            this.firstRead = true;
+            
+            if (LOGGER.isLoggable(Level.FINE)) {
+                line.addLineListener(new LineListener() {
+                    public void update(LineEvent event) {
+                        long bytePosition = event.getFramePosition() * frameSize;
+                        LOGGER.fine(String.format("Line %s at %d", 
+                                    event.getType(), bytePosition));
+                    }                
+                });
+            }
         }
         
         private synchronized boolean isQuit() {
