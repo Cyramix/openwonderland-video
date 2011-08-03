@@ -371,11 +371,7 @@ public class AudioInputStream {
      * microseconds
      */
     protected synchronized int microsecondsToBytes(long micros) {
-        long samples = (long) ((micros * sampleRate) / 1000000);
-        if (samples % 2 != 0) {
-            samples += 1;
-        }
-        
+        long samples = (long) ((micros * sampleRate) / 1000000); 
         int bytes = (int) ((samples * sampleSize) / 8);
         return bytes;
     }
@@ -424,6 +420,11 @@ public class AudioInputStream {
             // calculate how much data we can read
             int toRead = Math.min(length, getSize() - curOffset);
         
+            // make sure the amount of data to read is sample-aligned, rounding
+            // down so we are always below length and remaining
+            long samples = Math.round(Math.floor((toRead * 8) / sampleSize)); 
+            toRead = (int) (samples * sampleSize) / 8;
+            
             // fill the buffer
             fillBuffer(data, curOffset, offset, toRead);
             
