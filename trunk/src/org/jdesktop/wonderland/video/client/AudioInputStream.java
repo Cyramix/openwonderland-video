@@ -256,7 +256,7 @@ public class AudioInputStream {
         int written = 0;
         
         // the length of time to wait
-        long readTimeout = timeout.getReadTimeout();
+        long readTimeout = timeout.getReadTimeout(0);
         
         // loop until either we have written length bytes or time runs
         // out
@@ -307,7 +307,7 @@ public class AudioInputStream {
             }
             
             // recalculate the current timeout
-            readTimeout = timeout.getReadTimeout();
+            readTimeout = timeout.getReadTimeout(written);
         }
         
         // at this point we need to return something. If we have written less
@@ -388,9 +388,10 @@ public class AudioInputStream {
          * which point the buffer will be returned, padded with zeros if
          * necessary.
          * 
+         * @param bytesRead the number of bytes read so far
          * @return the current read timeout, in microseconds
          */
-        long getReadTimeout();
+        long getReadTimeout(int bytesRead);
     }
     
     /** access to a packet or empty data */
