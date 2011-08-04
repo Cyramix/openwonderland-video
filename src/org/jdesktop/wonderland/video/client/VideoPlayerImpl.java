@@ -27,13 +27,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.sound.sampled.AudioFormat;
@@ -928,7 +924,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             }
         }
         
-        public synchronized long getReadTimeout() {
+        public synchronized long getReadTimeout(int bytesRead) {
             // estimate how long it will take to use all the data in the
             // audio buffer
             long lineBytes = line.getLongFramePosition() * frameSize;
@@ -940,6 +936,13 @@ public class VideoPlayerImpl implements VideoStateSource,
             if (firstRead) {
                 firstRead = false;
                 bufferMicros = 20000;
+            }
+            
+            // if there is data in the buffer, pad our timing a bit
+            // so we don't have audio underruns while we are waiting to
+            // fill the buffer
+            if (bytesRead > 0) {
+                bufferMicros -= 5000;
             }
             
             if (LOGGER.isLoggable(Level.FINE)) {
