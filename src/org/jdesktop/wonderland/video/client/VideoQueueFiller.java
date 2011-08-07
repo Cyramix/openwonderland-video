@@ -94,14 +94,26 @@ public class VideoQueueFiller implements Runnable {
         this.mediaURI = mediaURI;
         start();
 
+        // timeout after 10 seconds
+        long now = System.currentTimeMillis();
+        long timeoutTime = now + 10000;
+        
         try {
-            while (thread != null && !mediaLoaded) {
-                wait();
+            while (thread != null && !mediaLoaded && now < timeoutTime) {
+                wait(timeoutTime - now);
+                now = System.currentTimeMillis();
             }
         } catch (InterruptedException ie) {
             // ignore
         }
 
+        // if the media didn't load, but the thread still exists, it means
+        // there was a timeout. Try to force the thread to respond by
+        // interrupting it.
+        if (!mediaLoaded && thread != null) {
+            thread.interrupt();
+        }
+        
         return mediaLoaded;
     }
 
