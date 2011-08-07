@@ -23,6 +23,9 @@
         <mkdir dir="build/lib"/>
         <jar jarfile="build/lib/wonderland-video.jar">
             <fileset dir="build/classes"/>
+            <fileset dir=".">
+                <include name="logging.properties"/>
+            </fileset>
         </jar>
     </target>
 

@@ -454,11 +454,13 @@ public class VideoPlayerImpl implements VideoStateSource,
             // we should preview the next frame we see
             setNeedsPreview(true);
             
+            // set the state
+            setState(VideoPlayerState.STOPPED);
+            
             // restart the queue filler at the beginning of the media
             if (restart) {
                 setFinished(false);
                 queueFiller.enable();
-                setState(VideoPlayerState.STOPPED);
             }
         }
     }
@@ -957,8 +959,14 @@ public class VideoPlayerImpl implements VideoStateSource,
         
         private void setLine(SourceDataLine line) {
             this.line = line;
-            this.buffer = new byte[line.getBufferSize() / 4];
             this.frameSize = line.getFormat().getFrameSize();
+            
+            // buffer size is approximately 1/4 the audio buffer size, rounded
+            // to the nearest frame
+            int bufferSize = line.getBufferSize() / 4;
+            bufferSize -= bufferSize % frameSize;
+            this.buffer = new byte[bufferSize];
+            
             this.firstRead = true;
             
             if (LOGGER.isLoggable(Level.FINE)) {

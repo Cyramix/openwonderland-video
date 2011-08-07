@@ -26,11 +26,14 @@ import java.awt.Dimension;
 import java.awt.Image;
 import java.awt.event.ActionEvent;
 import java.io.File;
+import java.io.InputStream;
 import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Level;
+import java.util.logging.LogManager;
 import java.util.logging.Logger;
 import java.util.prefs.Preferences;
 import javax.swing.AbstractAction;
@@ -611,6 +614,16 @@ public class SwingVideoPlayer extends javax.swing.JFrame
                 new SwingVideoPlayer().setVisible(true);
             }
         });
+        
+        try {
+            URL u = SwingVideoPlayer.class.getResource("/logging.properties");
+            LOGGER.warning("Load logging config from " + u);
+            if (u != null) {
+                LogManager.getLogManager().readConfiguration(u.openStream());
+            }
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING, "Error loading logs", ex);
+        }
     }
 
     private static class TimedImage {
