@@ -628,16 +628,24 @@ public class VideoQueueFiller implements Runnable {
     private synchronized void quit() {
         this.quit = true;
 
-        if (thread != null) {
-            LOGGER.warning("Interrupting thread " + thread);
-            thread.interrupt();
-        }
+        // timeout after 10 seconds
+        long now = System.currentTimeMillis();
+        long timeoutTime = now + 10000;
         
         try {
-            while (isRunning()) {
-                wait();
+            while (isRunning() && now < timeoutTime) {
+                LOGGER.warning("Interrupting thread " + thread);
+                thread.interrupt();
+                wait(1000);
+                now = System.currentTimeMillis();
+                
             }
         } catch (InterruptedException ie) {
+        } finally {
+            if (isRunning()) {
+                LOGGER.warning("Failed to interrupt thread " + thread);
+                thread = null;
+            }
         }
     }
 

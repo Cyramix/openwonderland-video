@@ -784,6 +784,11 @@ public class VideoPlayerImpl implements VideoStateSource,
             quit = false;
             
             thread = new Thread(this, "Audio player thread");
+            thread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                public void uncaughtException(Thread t, Throwable e) {
+                    LOGGER.log(Level.WARNING, "Error in audio thread", e);
+                }
+            });
             thread.start();
         }
         
@@ -834,12 +839,12 @@ public class VideoPlayerImpl implements VideoStateSource,
         
         public void run() {
             try {
-                line = openJavaSound(audioCoder);
-                setLine(line);
-               
-                line.start();
-            
                 synchronized (this) {
+                    line = openJavaSound(audioCoder);
+                    setLine(line);  
+                
+                    line.start();
+            
                     // start with the number of bytes already in the line
                     bytesWritten = line.getLongFramePosition() * frameSize;
             
@@ -949,8 +954,8 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             if (LOGGER.isLoggable(Level.FINE)) {
                 LOGGER.fine(String.format("Read timeout %d (line %d, " +
-                            "buffer %d) at wall time %d",
-                            bufferMicros, lineBytes, bufferMicros,
+                            "written %d) at wall time %d",
+                            bufferMicros, lineBytes, bytesWritten,
                             getWallTime()));
             }
             
