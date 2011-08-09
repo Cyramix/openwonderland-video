@@ -314,7 +314,7 @@ public class AudioInputStream {
         // than the minimum, we need to pad the result with zeros up to
         // minimum
         if (written < min) {
-            Arrays.fill(data, offset + written, min - written, (byte) 0);
+            Arrays.fill(data, offset + written, offset + min, (byte) 0);
             bytePosition += min - written;
             
             if (LOGGER.isLoggable(Level.FINE)) {
