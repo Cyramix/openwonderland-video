@@ -33,8 +33,8 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.logging.Level;
 
 /**
  *
@@ -48,6 +48,10 @@ public class VideoQueueFiller implements Runnable {
     private static final String[] NO_SEEK_PROTOCOLS = new String[] {
         "rtmp"
     };
+    
+    // default timeouts
+    private static final int DEFAULT_OPEN_TIMEOUT = 60000;
+    private static final int DEFAULT_CLOSE_TIMEOUT = 10000;
     
     private final VideoQueue queue;
 
@@ -63,6 +67,9 @@ public class VideoQueueFiller implements Runnable {
     private boolean canSeek = false;
     private boolean quit = false;
 
+    private int openTimeout = DEFAULT_OPEN_TIMEOUT;
+    private int closeTimeout = DEFAULT_CLOSE_TIMEOUT;
+    
     private Thread thread;
     
     private SeekOperation seek;
@@ -84,7 +91,23 @@ public class VideoQueueFiller implements Runnable {
 
         return out;
     }
-
+   
+    public int getOpenTimeout() {
+        return openTimeout;
+    }
+    
+    public void setOpenTimeout(int openTimeout) {
+        this.openTimeout = openTimeout;
+    }
+    
+    public int getCloseTimeout() {
+        return closeTimeout;
+    }
+    
+    public void setCloseTimeout(int closeTimeout) {
+        this.closeTimeout = closeTimeout;
+    }
+   
     public synchronized boolean openMedia(String mediaURI) {
         // stop the player if we are already running
         if (isRunning()) {
@@ -105,7 +128,7 @@ public class VideoQueueFiller implements Runnable {
 
         // timeout after 10 seconds
         long now = System.currentTimeMillis();
-        long timeoutTime = now + 10000;
+        long timeoutTime = now + getOpenTimeout();
         
         try {
             while (thread != null && !mediaLoaded && now < timeoutTime) {
@@ -316,6 +339,8 @@ public class VideoQueueFiller implements Runnable {
         // query how many streams the call to open found
         int numStreams = container.getNumStreams();
 
+        LOGGER.fine("Open container with " + numStreams + " streams.");
+        
         // now iterate through the streams to find the first video and audio
         // streams
         videoStreamId = -1;
@@ -350,6 +375,8 @@ public class VideoQueueFiller implements Runnable {
                 throw new RuntimeException("could not open video decoder for container: " + mediaURI);
             }
 
+            LOGGER.fine("Opened video stream: " + videoCoder);
+            
             // notify queue of this new video
             queue.newStream(videoStreamId, videoCoder);
         }
@@ -359,6 +386,8 @@ public class VideoQueueFiller implements Runnable {
                 throw new RuntimeException("could not open audio decoder for container: " + mediaURI);
             }
 
+            LOGGER.fine("Opened audio stream: " + audioCoder);
+            
             // notify queue of this new audio
             queue.newStream(audioStreamId, audioCoder);
         }
@@ -652,7 +681,7 @@ public class VideoQueueFiller implements Runnable {
 
         // timeout after 10 seconds
         long now = System.currentTimeMillis();
-        long timeoutTime = now + 10000;
+        long timeoutTime = now + getCloseTimeout();
         
         try {
             while (isRunning() && now < timeoutTime) {

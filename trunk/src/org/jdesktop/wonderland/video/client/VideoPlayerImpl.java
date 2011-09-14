@@ -240,9 +240,15 @@ public class VideoPlayerImpl implements VideoStateSource,
                 stop(false);
                 
                 try {
+                    setState(VideoPlayerState.NO_MEDIA);
                     setFinished(false);
-                    queueFiller.openMedia(mediaURI);
-                    setState(VideoPlayerState.MEDIA_READY);
+                    if (queueFiller.openMedia(mediaURI)) {
+                        setState(VideoPlayerState.MEDIA_READY);
+                    } else {
+                        LOGGER.warning("Unable to open " + uri);
+                        setState(VideoPlayerState.NO_MEDIA);
+                    }
+                           
                 } finally {
                     synchronized (VideoPlayerImpl.this) {
                         mediaOpener = null;
@@ -621,7 +627,7 @@ public class VideoPlayerImpl implements VideoStateSource,
         // sets the start time of the queue to the PTS of the first packet after
         // a clear
         if (!audioQueue.isOpen()) {
-           LOGGER.fine("Open time source at time " + (timestamp / 1000000.0));
+            LOGGER.fine("Open time source at time " + (timestamp / 1000000.0));
             audioQueue.open(timestamp);
         }
         
@@ -752,6 +758,14 @@ public class VideoPlayerImpl implements VideoStateSource,
         
         public synchronized void setAudioCoder(IStreamCoder audioCoder) {
             this.audioCoder = audioCoder;
+        
+            if (LOGGER.isLoggable(Level.FINE)) {
+                LOGGER.fine(String.format("Set audio coder. Sample rate: %d, " +
+                            " format: %s, channels: %d.", 
+                            audioCoder.getSampleRate(), 
+                            audioCoder.getSampleFormat().name(),
+                            audioCoder.getChannels()));
+            }
         }
         
         public synchronized void open(long startPTS) {
@@ -762,6 +776,12 @@ public class VideoPlayerImpl implements VideoStateSource,
             int channels = audioCoder.getChannels();
             float sampleSize = 
                     IAudioSamples.findSampleBitDepth(audioCoder.getSampleFormat());
+            
+            if (LOGGER.isLoggable(Level.FINE)) {
+                LOGGER.fine(String.format("Open audio. Sample rate: %d, " +
+                            " sampleSize: %f, channels: %d.",
+                            sampleRate, sampleSize, channels));
+            }
             
             audioStream.start(startPTS, sampleRate,
                               (int) (sampleSize * channels));
@@ -818,6 +838,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             if (line != null) {
                 line.flush();
+                line = null;
             }
         }
         
