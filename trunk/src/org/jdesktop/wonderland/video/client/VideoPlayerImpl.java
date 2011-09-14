@@ -756,6 +756,8 @@ public class VideoPlayerImpl implements VideoStateSource,
         private long wallTime;
         private boolean firstRead;
         
+        private int underrunCount;
+        
         public synchronized void setAudioCoder(IStreamCoder audioCoder) {
             this.audioCoder = audioCoder;
         
@@ -771,6 +773,7 @@ public class VideoPlayerImpl implements VideoStateSource,
         public synchronized void open(long startPTS) {
             this.startPTS = startPTS;
             audioStream = new AudioInputStream();
+            underrunCount = 0;
             
             int sampleRate = audioCoder.getSampleRate();
             int channels = audioCoder.getChannels();
@@ -932,6 +935,18 @@ public class VideoPlayerImpl implements VideoStateSource,
             long lineBytes = line.getLongFramePosition() * frameSize;
             if (lineBytes == bytesWritten) {
                 LOGGER.warning("Audio underrun");
+                underrunCount++;
+                
+                // if we get more than one consecutive audio underrun, it
+                // means something is wrong -- we are behind in a stream
+                // or something similar. Clear out the various buffers and
+                // restart the stream when we have data again
+                if (underrunCount >= 2) {
+                    VideoPlayerImpl.this.clear();
+                    return;
+                }
+            } else {
+                underrunCount = 0;
             }
             
             if (LOGGER.isLoggable(Level.FINE)) {
@@ -966,11 +981,15 @@ public class VideoPlayerImpl implements VideoStateSource,
                 bufferMicros = 20000;
             }
             
-            // if there is data in the buffer, pad our timing a bit
+            // if there is data in the buffer, pad our timing
             // so we don't have audio underruns while we are waiting to
-            // fill the buffer
+            // fill the buffer. The number used for padding (12000 microseconds)
+            // is the approximate resolution observed on the Mac implementation
+            // of JavaSound. A similar resolution was estimated on Windows.
+            // By padding by the timer resolution, we guarantee the audio 
+            // won't underrun because the timer hasn't updated yet.
             if (bytesRead > 0) {
-                bufferMicros -= 5000;
+                bufferMicros -= 12000;
             }
             
             if (LOGGER.isLoggable(Level.FINE)) {
