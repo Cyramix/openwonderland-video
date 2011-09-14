@@ -438,7 +438,7 @@ public class VideoPlayerImpl implements VideoStateSource,
      * @param restart true to restart from the beginning
      */
     protected void stop(boolean restart) {
-        LOGGER.warning("stop");
+        LOGGER.warning("stop -- restart: " + restart);
 
         if (isPlayable() && (getState() == VideoPlayerState.PLAYING || 
                              getState() == VideoPlayerState.PAUSED)) 
