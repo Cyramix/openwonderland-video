@@ -91,7 +91,16 @@ public class VideoQueueFiller implements Runnable {
             quit();
         }
 
-        this.mediaURI = mediaURI;
+        // prepare the content (for example, by downloading it if it is not
+        // cached)
+        try {
+            this.mediaURI = prepareContent(mediaURI);
+        } catch (IOException ioe) {
+            LOGGER.log(Level.WARNING, "Error opening " + mediaURI, ioe);
+            return false;
+        }
+        
+        // start the video loading thread
         start();
 
         // timeout after 10 seconds
@@ -235,7 +244,20 @@ public class VideoQueueFiller implements Runnable {
             }
         }
     }
-
+    
+    /**
+     * Prepare content for the given URI. This is an untimed operation
+     * that may start downloading a media file or similar to make
+     * it available to the system.
+     * @param mediaURI the uri to prepare
+     * @return the URI to load. Typically this is the same as the mediaURI
+     * that was passed in.
+     * @throws IOException if there is an error reading the given URI
+     */
+    protected String prepareContent(String mediaURI) throws IOException {
+        return mediaURI;
+    }
+    
     /**
      * Called to open the container for the given URI
      * @param uri the uri to open
