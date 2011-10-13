@@ -929,7 +929,7 @@ public class VideoPlayerImpl implements VideoStateSource,
             
             // adjust volume manually, since doing it via javasound is
             // unreliable
-            byte[] adjusted = adjustVolume(line, volume, buffer, 0, read);
+            byte[] adjusted = adjustVolume(line, getVolume(), buffer, 0, read);
             
             // check for buffer underrun
             long lineBytes = line.getLongFramePosition() * frameSize;
