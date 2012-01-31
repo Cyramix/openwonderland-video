@@ -1,7 +1,7 @@
 /**
  * Open Wonderland
  *
- * Copyright (c) 2011, Open Wonderland Foundation, All Rights Reserved
+ * Copyright (c) 2011 - 2012, Open Wonderland Foundation, All Rights Reserved
  *
  * Redistributions in source code form must reproduce the above
  * copyright and this condition.
@@ -18,7 +18,7 @@
 
 package org.jdesktop.wonderland.video.client;
 
-import com.xuggle.xuggler.IPixelFormat.Type;
+import com.xuggle.xuggler.IPixelFormat;
 import com.xuggle.xuggler.IVideoPicture;
 import com.xuggle.xuggler.video.ConverterFactory;
 import com.xuggle.xuggler.video.IConverter;
@@ -26,7 +26,6 @@ import java.awt.Dimension;
 import java.awt.Image;
 import java.awt.event.ActionEvent;
 import java.io.File;
-import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -142,7 +141,7 @@ public class SwingVideoPlayer extends javax.swing.JFrame
     }
 
     @Override
-    public void openVideo(int videoWidth, int videoHeight, Type videoFormat) {
+    public void openVideo(int videoWidth, int videoHeight, IPixelFormat.Type videoFormat) {
         setVisible(false);
         videoLabel.setSize(videoWidth, videoHeight);
         videoLabel.setPreferredSize(new Dimension(videoWidth, videoHeight));
