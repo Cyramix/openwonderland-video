@@ -14,7 +14,8 @@
         
         <mkdir dir="build/classes"/>
         
-        <javac debug="true" srcdir="src" destdir="build/classes">
+        <javac debug="true" srcdir="src" destdir="build/classes"
+               source="6" target="6">
             <classpath location="lib/xuggle-xuggler.jar"/>
         </javac>
     </target>
